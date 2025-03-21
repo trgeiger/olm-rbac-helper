@@ -1,0 +1,14 @@
+apiVersion: olm.operatorframework.io/v1
+kind: ClusterExtension
+metadata:
+  name: argocd
+spec:
+  namespace: argocd
+  serviceAccount:
+    name: argocd-installer
+  source:
+    sourceType: Catalog
+    catalog:
+      packageName: argocd-operator
+      version: 0.6.0
+
