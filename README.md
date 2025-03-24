@@ -1,4 +1,4 @@
-#Proof of Concept OLM RBAC Helper Plugin
+# Proof of Concept OLM RBAC Helper Plugin
 
 This plugin takes in a manifest file for a ClusterExtension and checks the installer ServiceAccount specified in that manifest file for all the permissions it requires to install and manage the ClusterExtension. If any are missing, it outputs the missing RBAC in the form of a complete Role and/or ClusterRole manifest.
 
@@ -6,6 +6,8 @@ Build the binary with a "kubectl" prefix and place somewhere in your `$PATH`:
 ```sh
 go build -o ~/.local/bin/kubectl-olmrbac .
 ```
+
+The plugin caches the catalog and ClusterExtension images to /tmp/catalogs so you must create that directory before using the tool.
 
 The plugin has 2 required arguments, an extension manifest file and a catalog server URL, i.e.:
 ```sh
