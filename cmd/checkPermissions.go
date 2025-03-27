@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,7 +47,6 @@ type foundBundle struct {
 	priority int32
 }
 
-// checkPermissionsCmd represents the checkPermissions command
 var checkPermissionsCmd = &cobra.Command{
 	Use:  "kubectl olmrbac [EXTENSION_MANIFEST] [CATALOG_URL]",
 	Args: cobra.ExactArgs(2),
@@ -82,8 +82,12 @@ func run(manifestPath string, catalogHost string) error {
 	if err != nil {
 		return fmt.Errorf("could not parse clusterextension manifest")
 	}
-
-	catalogCache := catalogcache.NewFilesystemCache("/tmp/catalogs")
+	tempDirName := filepath.Join(os.TempDir(), "olm-rbac-helper", "catalogs")
+	err = os.MkdirAll(tempDirName, 0755)
+	if err != nil {
+		return err
+	}
+	catalogCache := catalogcache.NewFilesystemCache(tempDirName)
 	catalogClient := catalogclient.New(catalogCache, func() (*http.Client, error) {
 		return &http.Client{
 			Timeout: 10 * time.Second,
@@ -156,7 +160,12 @@ func run(manifestPath string, catalogHost string) error {
 		},
 	}
 
-	imageCache := imageutil.BundleCache("/tmp/bundles")
+	imageCacheName := filepath.Join(os.TempDir(), "olm-rbac-helper", "bundles")
+	err = os.MkdirAll(imageCacheName, 0755)
+	if err != nil {
+		return err
+	}
+	imageCache := imageutil.BundleCache(imageCacheName)
 
 	image, _, _, err := imagePuller.Pull(context.TODO(), ext.GetName(), bundle.Image, imageCache)
 	if err != nil {
@@ -174,9 +183,12 @@ func run(manifestPath string, catalogHost string) error {
 
 	userInfo := user.DefaultInfo{Name: fmt.Sprintf("system:serviceaccount:%s:%s", ext.Spec.Namespace, ext.Spec.ServiceAccount.Name)}
 	preAuth := authorization.NewRBACPreAuthorizer(myClient)
-	missingRules, err := preAuth.PreAuthorize(context.TODO(), &userInfo, strings.NewReader(release.Manifest))
-	if err != nil {
-		fmt.Println(fmt.Errorf("could not check for missing rules: %w", err))
+	// Don't handle these errors as they're redundant to our missing rules
+	missingRules, _ := preAuth.PreAuthorize(context.TODO(), &userInfo, strings.NewReader(release.Manifest))
+
+	if len(missingRules) == 0 {
+		fmt.Printf("ServiceAccount %s fulfills RBAC requirements of ClusterExtension %s", ext.Spec.ServiceAccount.Name, ext.Name)
+		return nil
 	}
 
 	missingRulesObjects := []runtime.Object{}
@@ -209,21 +221,27 @@ func run(manifestPath string, catalogHost string) error {
 
 	serializer := json.NewYAMLSerializer(json.DefaultMetaFactory, nil, nil)
 
+	// default to encoding to stdout
 	output := os.Stdout
+	// if file output flag provided, encode out to the specified file
 	if fileOutput != "" {
 		file, err := os.Create(fileOutput)
-		output = file
 		if err != nil {
 			return fmt.Errorf("could not create output file: %w", err)
 		}
+		output = file
+		fmt.Printf("Writing missing RBAC to specified file %s", fileOutput)
 		defer file.Close()
 	}
-	for _, obj := range missingRulesObjects {
+
+	for i, obj := range missingRulesObjects {
+		if i > 0 {
+			output.WriteString("---\n")
+		}
 		err := serializer.Encode(obj, output)
 		if err != nil {
 			return fmt.Errorf("could not encode yaml objects to output: %w", err)
 		}
-		fmt.Println("---")
 	}
 
 	return nil
@@ -233,21 +251,18 @@ func renderHelmManifests(ext *ocv1.ClusterExtension, chart *chart.Chart) (*relea
 	actionConfig := new(action.Configuration)
 	settings := cli.New()
 
-	// Initialize Helm action client
 	if err := actionConfig.Init(settings.RESTClientGetter(), ext.Spec.Namespace, "memory", log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action client: %w", err)
 	}
 
-	// Create Helm install action for rendering
 	install := action.NewInstall(actionConfig)
 	install.ReleaseName = ext.GetName()
-	install.DryRun = true // Dry-run to render without applying
+	install.DryRun = true
 	install.IsUpgrade = false
 	install.IncludeCRDs = true
 	install.ClientOnly = true
 	install.Replace = true
 
-	// Execute dry-run install
 	release, err := install.Run(chart, nil)
 	if err != nil {
 		return nil, fmt.Errorf("render error: %w", err)

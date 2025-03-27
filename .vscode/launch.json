@@ -8,7 +8,7 @@
             "mode": "auto",
             "program": "${workspaceRoot}/main.go",
             "args": [
-                "sample.yaml",
+                "samples/sample.yaml",
                 "127.0.0.1:8080"
             ],
             "showLog": true
@@ -20,7 +20,7 @@
             "mode": "auto",
             "program": "${workspaceRoot}/main.go",
             "args": [
-                "sample.yaml",
+                "samples/sample.yaml",
                 "127.0.0.1:8080",
                 "-o",
                 "missing.yaml"
